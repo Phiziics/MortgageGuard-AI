@@ -1,0 +1,39 @@
+project:
+  name: MortgageGuard-AI
+  prediction_target: serious_credit_event_within_12_months
+
+source:
+  provider: Freddie Mac
+  dataset: Single-Family Loan-Level Dataset
+  vintage_years:
+    - 2020
+    - 2021
+    - 2022
+    - 2023
+    - 2024
+
+paths:
+  raw: data/raw
+  bronze: data/bronze
+  silver: data/silver
+  gold: data/gold
+  reference: data/reference
+
+files:
+  origination_pattern: "*orig*.txt"
+  performance_pattern: "*svcg*.txt"
+
+target:
+  prediction_horizon_months: 12
+  serious_delinquency_threshold: 3
+
+splits:
+  development_years:
+    - 2020
+    - 2021
+  validation_years:
+    - 2022
+  test_years:
+    - 2023
+  production_replay_years:
+    - 2024
