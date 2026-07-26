@@ -1,35 +1,81 @@
+# Virtual environment
 .venv/
+
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Environment variables
 .env
 
+# Local data
 data/raw/*
 data/bronze/*
 data/silver/*
 data/gold/*
 
+# Keep empty data folders in Git
 !data/raw/.gitkeep
 !data/bronze/.gitkeep
 !data/silver/.gitkeep
 !data/gold/.gitkeep
 
-models/*
-artifacts/*
-!models/.gitkeep
-!artifacts/.gitkeep
-
-mlruns/
-mlartifacts/
-.dvc/cache/
-
+# Large data formats
 *.zip
 *.7z
 *.csv
 *.parquet
 
+# Allow project reports
+!reports/*.csv
+
+# Model artifacts
+models/*
+artifacts/*
+
+# Keep empty artifact folders in Git
+!models/.gitkeep
+!artifacts/.gitkeep
+
+# MLflow
+mlruns/
+mlartifacts/
+*.db
+
+# DVC
+.dvc/cache/
+.dvc/tmp/
+
+# Testing
 .pytest_cache/
-.ruff_cache/
-htmlcov/
 .coverage
 coverage.xml
+htmlcov/
+
+# Ruff
+.ruff_cache/
+
+# Logs
+*.log
+logs/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+
+# Build files
+build/
+dist/
+*.egg-info/
+
+# Temporary files
+*.tmp
+*.temp

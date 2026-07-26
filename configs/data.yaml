@@ -1,23 +1,35 @@
 project:
   name: MortgageGuard-AI
+  description: Mortgage credit-risk, model-validation, and MLOps platform
   prediction_target: serious_credit_event_within_12_months
+  random_seed: 42
 
 source:
   provider: Freddie Mac
-  dataset: Single-Family Loan-Level Dataset
+  dataset_name: Single-Family Loan-Level Dataset
+  dataset_type: Standard Dataset Sample by Vintage
+
   vintage_years:
     - 2023
     - 2024
     - 2025
 
 paths:
-  raw: data/raw
-  bronze: data/bronze
-  silver: data/silver
-  gold: data/gold
-  reference: data/reference
+  raw_directory: data/raw
+  bronze_directory: data/bronze
+  silver_directory: data/silver
+  gold_directory: data/gold
+  reference_directory: data/reference
+
+  reports_directory: reports
+  artifacts_directory: artifacts
+  models_directory: models
 
 files:
+  archive_extension: ".zip"
+  delimiter: "|"
+  encoding: utf-8
+
   origination_patterns:
     - "*orig*.txt"
 
@@ -25,37 +37,170 @@ files:
     - "*perf*.txt"
     - "*svcg*.txt"
 
-  delimiter: "|"
+  ignored_patterns:
+    - "*crt*"
+    - "*deal*"
+    - "*readme*"
+    - "*.pdf"
+
+ingestion:
+  extract_archives: false
+  read_from_archive: true
+  chunk_size: 100000
+  fail_on_bad_lines: true
+  calculate_sha256: true
+  create_ingestion_manifest: true
+  overwrite_existing_partitions: true
+
+bronze:
+  output_format: parquet
+  compression: snappy
+
+  partition_columns:
+    - dataset_type
+    - vintage_year
+
+  lineage_columns:
+    - _source_archive
+    - _source_member
+    - _source_sha256
+    - _vintage_year
+    - _ingestion_run_id
+    - _ingested_at_utc
+
+silver:
+  output_format: parquet
+  compression: snappy
+
+  standardize_column_names: true
+  trim_string_values: true
+  convert_blank_strings_to_null: true
+  remove_exact_duplicates: true
+  validate_primary_keys: true
+
+gold:
+  output_format: parquet
+  compression: snappy
+  modeling_table_name: mortgage_default_modeling_table
+  scoring_table_name: mortgage_default_scoring_table
+  monitoring_table_name: mortgage_default_monitoring_table
 
 target:
+  name: serious_credit_event
   prediction_horizon_months: 12
-  serious_delinquency_threshold: 3
+
+  delinquency_threshold_months: 3
+
+  serious_credit_event_conditions:
+    - delinquency_90_plus
+    - foreclosure
+    - short_sale
+    - real_estate_owned
+    - charge_off
+
+  require_complete_performance_window: true
+  exclude_unmatured_labels_from_training: true
+
+features:
+  use_origination_features_only: true
+  prevent_future_information_leakage: true
+
+  candidate_numeric_features:
+    - credit_score
+    - original_combined_loan_to_value
+    - original_debt_to_income_ratio
+    - original_upb
+    - original_interest_rate
+    - original_loan_term
+    - number_of_borrowers
+    - number_of_units
+
+  candidate_categorical_features:
+    - first_time_homebuyer_flag
+    - loan_purpose
+    - property_type
+    - occupancy_status
+    - property_state
+    - channel
+    - mortgage_insurance_type
+    - amortization_type
 
 splits:
-  strategy: vintage_and_origination_period
+  strategy: vintage_year
 
   development:
     vintage_year: 2023
-    origination_start: "2023-01"
-    origination_end: "2023-09"
-
-  validation:
-    vintage_year: 2023
-    origination_start: "2023-10"
-    origination_end: "2023-12"
+    purpose: model_training_and_internal_validation
 
   out_of_time_test:
     vintage_year: 2024
-    origination_start: "2024-01"
-    origination_end: "2024-09"
+    purpose: independent_model_validation
 
   production_replay:
     vintage_year: 2025
-    labels_available: false
+    purpose: production_scoring_and_monitoring
+    labels_expected_to_be_delayed: true
 
-headers:
-  directory: data/reference/file_headers_july_2026
+data_quality:
+  fail_pipeline_on_critical_error: true
 
-bronze:
-  chunk_size: 100000
-  compression: snappy
+  required_origination_columns:
+    - loan_identifier
+    - credit_score
+    - first_payment_date
+    - maturity_date
+    - original_upb
+    - original_loan_term
+    - original_interest_rate
+    - original_combined_loan_to_value
+    - original_debt_to_income_ratio
+
+  required_performance_columns:
+    - loan_identifier
+    - monthly_reporting_period
+    - current_actual_upb
+    - current_loan_delinquency_status
+
+  primary_keys:
+    origination:
+      - loan_identifier
+
+    performance:
+      - loan_identifier
+      - monthly_reporting_period
+
+  accepted_ranges:
+    credit_score:
+      minimum: 300
+      maximum: 850
+
+    original_combined_loan_to_value:
+      minimum: 0
+      maximum: 250
+
+    original_debt_to_income_ratio:
+      minimum: 0
+      maximum: 100
+
+    original_upb:
+      minimum: 1
+
+    original_interest_rate:
+      minimum: 0
+      maximum: 25
+
+    original_loan_term:
+      minimum: 1
+      maximum: 600
+
+monitoring_reference:
+  baseline_vintage_year: 2023
+  comparison_vintage_years:
+    - 2024
+    - 2025
+
+outputs:
+  raw_inventory_report: reports/raw_data_inventory.csv
+  bronze_ingestion_manifest: reports/bronze_ingestion_manifest.csv
+  data_quality_report: reports/data_quality_report.csv
+  modeling_dataset_manifest: reports/modeling_dataset_manifest.csv
