@@ -6,11 +6,9 @@ source:
   provider: Freddie Mac
   dataset: Single-Family Loan-Level Dataset
   vintage_years:
-    - 2020
-    - 2021
-    - 2022
     - 2023
     - 2024
+    - 2025
 
 paths:
   raw: data/raw
@@ -20,20 +18,44 @@ paths:
   reference: data/reference
 
 files:
-  origination_pattern: "*orig*.txt"
-  performance_pattern: "*svcg*.txt"
+  origination_patterns:
+    - "*orig*.txt"
+
+  performance_patterns:
+    - "*perf*.txt"
+    - "*svcg*.txt"
+
+  delimiter: "|"
 
 target:
   prediction_horizon_months: 12
   serious_delinquency_threshold: 3
 
 splits:
-  development_years:
-    - 2020
-    - 2021
-  validation_years:
-    - 2022
-  test_years:
-    - 2023
-  production_replay_years:
-    - 2024
+  strategy: vintage_and_origination_period
+
+  development:
+    vintage_year: 2023
+    origination_start: "2023-01"
+    origination_end: "2023-09"
+
+  validation:
+    vintage_year: 2023
+    origination_start: "2023-10"
+    origination_end: "2023-12"
+
+  out_of_time_test:
+    vintage_year: 2024
+    origination_start: "2024-01"
+    origination_end: "2024-09"
+
+  production_replay:
+    vintage_year: 2025
+    labels_available: false
+
+headers:
+  directory: data/reference/file_headers_july_2026
+
+bronze:
+  chunk_size: 100000
+  compression: snappy

@@ -6,7 +6,7 @@ from src.data.inventory import build_raw_inventory
 RAW_DIRECTORY = Path("data/raw")
 OUTPUT_FILE = Path("reports/raw_data_inventory.csv")
 
-EXPECTED_YEARS = {2020, 2021, 2022, 2023, 2024}
+EXPECTED_YEARS = {2023, 2024, 2025}
 
 
 def main() -> None:
