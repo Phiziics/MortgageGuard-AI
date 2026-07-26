@@ -1,0 +1,271 @@
+project:
+  name: MortgageGuard-AI
+  task_type: binary_classification
+  target_column: serious_credit_event
+  random_seed: 42
+
+training:
+  development_vintage: 2023
+  validation_vintage: 2024
+  production_replay_vintage: 2025
+
+  internal_validation:
+    enabled: true
+    test_size: 0.20
+    stratify: true
+
+  cross_validation:
+    enabled: true
+    strategy: stratified_kfold
+    number_of_folds: 5
+    shuffle: true
+
+  class_imbalance:
+    strategy: class_weight
+    positive_class: 1
+
+  save_preprocessing_pipeline: true
+  save_feature_list: true
+  save_training_metadata: true
+
+baseline:
+  name: mortgage_business_rule_score
+  description: Simple risk-ranking baseline using credit score, LTV, and DTI
+
+  rules:
+    low_credit_score_threshold: 660
+    high_ltv_threshold: 90
+    high_dti_threshold: 43
+
+champion_model:
+  name: logistic_regression
+
+  estimator:
+    class_path: sklearn.linear_model.LogisticRegression
+
+  parameters:
+    solver: liblinear
+    penalty: l2
+    class_weight: balanced
+    max_iter: 2000
+    random_state: 42
+
+  tuning:
+    enabled: true
+    search_method: grid_search
+
+    parameter_grid:
+      C:
+        - 0.1
+        - 1.0
+        - 10.0
+
+    scoring: roc_auc
+    number_of_folds: 5
+    n_jobs: -1
+
+challenger_model:
+  name: xgboost
+
+  estimator:
+    class_path: xgboost.XGBClassifier
+
+  parameters:
+    objective: binary:logistic
+    eval_metric: logloss
+    random_state: 42
+    n_jobs: -1
+    tree_method: hist
+
+  tuning:
+    enabled: true
+    search_method: grid_search
+
+    parameter_grid:
+      n_estimators:
+        - 200
+        - 400
+
+      max_depth:
+        - 3
+        - 5
+
+      learning_rate:
+        - 0.05
+        - 0.10
+
+      subsample:
+        - 0.80
+        - 1.00
+
+      colsample_bytree:
+        - 0.80
+        - 1.00
+
+    scoring: roc_auc
+    number_of_folds: 3
+    n_jobs: -1
+
+calibration:
+  enabled: true
+
+  methods:
+    - sigmoid
+    - isotonic
+
+  selection_metric: brier_score
+  validation_strategy: prefit
+
+threshold_selection:
+  enabled: true
+  selection_dataset: validation
+
+  primary_method: maximize_f1
+
+  additional_analysis:
+    - maximize_recall
+    - minimize_false_negative_rate
+    - top_decile_capture
+    - fixed_review_capacity
+
+  fixed_review_capacity:
+    maximum_portfolio_review_rate: 0.10
+
+evaluation:
+  discrimination_metrics:
+    - roc_auc
+    - average_precision
+    - gini
+    - ks_statistic
+    - top_decile_capture
+
+  calibration_metrics:
+    - brier_score
+    - log_loss
+    - calibration_intercept
+    - calibration_slope
+    - expected_to_observed_ratio
+
+  classification_metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - specificity
+    - false_positive_rate
+    - false_negative_rate
+    - confusion_matrix
+
+  business_metrics:
+    - high_risk_loan_count
+    - high_risk_loan_balance
+    - default_capture_rate
+    - manual_review_rate
+    - expected_credit_loss
+    - false_negative_count
+
+segment_validation:
+  enabled: true
+
+  segments:
+    - credit_score_band
+    - ltv_band
+    - dti_band
+    - loan_purpose
+    - occupancy_status
+    - property_type
+    - property_state
+
+model_selection:
+  compare_models:
+    - mortgage_business_rule_score
+    - logistic_regression
+    - xgboost
+
+  primary_metric: roc_auc
+
+  supporting_metrics:
+    - average_precision
+    - brier_score
+    - calibration_slope
+    - top_decile_capture
+    - false_negative_rate
+
+  approval_rules:
+    minimum_roc_auc: 0.70
+    maximum_brier_score: 0.25
+    minimum_calibration_slope: 0.80
+    maximum_calibration_slope: 1.20
+    maximum_performance_decline_out_of_time: 0.05
+
+  prefer_simpler_model_when_performance_difference_below: 0.02
+
+explainability:
+  enabled: true
+
+  global_methods:
+    - feature_importance
+    - permutation_importance
+    - shap_summary
+
+  local_methods:
+    - shap_values
+
+  sample_size: 5000
+
+mlflow:
+  enabled: true
+  tracking_uri: sqlite:///mlflow.db
+  experiment_name: mortgageguard-credit-risk-development
+
+  log:
+    parameters: true
+    metrics: true
+    models: true
+    feature_names: true
+    dataset_metadata: true
+    plots: true
+    validation_reports: true
+    input_examples: true
+    model_signature: true
+
+model_registry:
+  enabled: true
+  registered_model_name: MortgageGuard-Credit-Risk-Model
+
+  aliases:
+    candidate: candidate
+    champion: champion
+    production: production
+    rollback: rollback
+
+  require_validation_approval: true
+  retain_previous_production_version: true
+
+versioning:
+  initial_model_version: 0.1.0
+  versioning_strategy: semantic_versioning
+
+  version_rules:
+    patch: recalibration_or_bug_fix
+    minor: retraining_or_feature_update
+    major: methodology_or_architecture_change
+
+artifacts:
+  preprocessing_pipeline: artifacts/preprocessing_pipeline.joblib
+  baseline_model: artifacts/baseline_model.joblib
+  champion_model: artifacts/champion_model.joblib
+  challenger_model: artifacts/challenger_model.joblib
+  selected_model: artifacts/selected_model.joblib
+  feature_list: artifacts/model_features.json
+  decision_threshold: artifacts/decision_threshold.json
+  training_metadata: artifacts/training_metadata.json
+  evaluation_report: reports/model_evaluation_report.json
+  validation_report: reports/independent_validation_report.json
+
+reproducibility:
+  record_git_commit: true
+  record_data_version: true
+  record_environment: true
+  record_training_timestamp: true
+  record_random_seed: true
