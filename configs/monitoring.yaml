@@ -1,0 +1,436 @@
+project:
+  name: MortgageGuard-AI
+  monitoring_environment: production_replay
+  production_vintage_year: 2025
+  baseline_vintage_year: 2023
+
+monitoring:
+  enabled: true
+
+  monitoring_types:
+    data_quality: true
+    data_drift: true
+    prediction_drift: true
+    model_performance: true
+    system_health: true
+    business_performance: true
+
+  delayed_labels:
+    enabled: true
+    prediction_horizon_months: 12
+    evaluate_only_matured_records: true
+    retain_unmatured_predictions: true
+
+reference_data:
+  source: data/gold/mortgage_default_modeling_table.parquet
+  vintage_year: 2023
+  purpose: monitoring_baseline
+
+current_data:
+  source: data/gold/mortgage_default_monitoring_table.parquet
+  vintage_year: 2025
+  purpose: production_replay
+
+prediction_log:
+  path: artifacts/prediction_logs
+  format: parquet
+
+  required_columns:
+    - loan_identifier
+    - prediction
+    - probability_of_default
+    - risk_band
+    - model_name
+    - model_version
+    - scoring_timestamp
+    - vintage_year
+
+monitoring_outputs:
+  metrics_directory: artifacts/monitoring
+  reports_directory: reports/monitoring
+  incidents_directory: reports/incidents
+
+  latest_metrics_file: artifacts/monitoring/latest_metrics.json
+  monitoring_history_file: artifacts/monitoring/monitoring_history.parquet
+  alert_history_file: artifacts/monitoring/alert_history.parquet
+
+data_quality:
+  enabled: true
+
+  schema_checks:
+    fail_on_missing_required_column: true
+    fail_on_unexpected_data_type: true
+    warn_on_new_category: true
+    warn_on_column_order_change: false
+
+  missing_values:
+    warning_threshold: 0.03
+    critical_threshold: 0.05
+
+  duplicate_records:
+    warning_threshold: 0.001
+    critical_threshold: 0.01
+
+  invalid_values:
+    warning_threshold: 0.01
+    critical_threshold: 0.03
+
+  freshness:
+    enabled: true
+    warning_age_hours: 48
+    critical_age_hours: 72
+
+  accepted_ranges:
+    credit_score:
+      minimum: 300
+      maximum: 850
+
+    original_combined_loan_to_value:
+      minimum: 0
+      maximum: 250
+
+    original_debt_to_income_ratio:
+      minimum: 0
+      maximum: 100
+
+    original_upb:
+      minimum: 1
+
+    original_interest_rate:
+      minimum: 0
+      maximum: 25
+
+data_drift:
+  enabled: true
+  method: population_stability_index
+
+  minimum_sample_size: 1000
+
+  thresholds:
+    stable: 0.10
+    warning: 0.25
+    critical: 0.25
+
+  numeric_features:
+    - credit_score
+    - original_combined_loan_to_value
+    - original_debt_to_income_ratio
+    - original_upb
+    - original_interest_rate
+    - original_loan_term
+    - number_of_borrowers
+    - number_of_units
+
+  categorical_features:
+    - first_time_homebuyer_flag
+    - loan_purpose
+    - property_type
+    - occupancy_status
+    - property_state
+    - channel
+    - mortgage_insurance_type
+    - amortization_type
+
+  feature_drift_rules:
+    warning_feature_share: 0.20
+    critical_feature_share: 0.40
+
+prediction_monitoring:
+  enabled: true
+
+  metrics:
+    - mean_probability_of_default
+    - median_probability_of_default
+    - prediction_standard_deviation
+    - high_risk_rate
+    - prediction_distribution
+    - risk_band_distribution
+
+  drift_method: population_stability_index
+
+  thresholds:
+    prediction_psi_warning: 0.10
+    prediction_psi_critical: 0.25
+
+    mean_probability_change_warning: 0.10
+    mean_probability_change_critical: 0.20
+
+    high_risk_rate_change_warning: 0.10
+    high_risk_rate_change_critical: 0.20
+
+model_performance:
+  enabled: true
+  evaluate_only_when_labels_available: true
+
+  metrics:
+    - roc_auc
+    - average_precision
+    - gini
+    - ks_statistic
+    - brier_score
+    - log_loss
+    - calibration_slope
+    - calibration_intercept
+    - expected_to_observed_ratio
+    - precision
+    - recall
+    - f1
+    - false_positive_rate
+    - false_negative_rate
+    - top_decile_capture
+
+  thresholds:
+    minimum_roc_auc: 0.70
+    minimum_average_precision: 0.10
+    maximum_brier_score: 0.25
+
+    minimum_calibration_slope: 0.80
+    maximum_calibration_slope: 1.20
+
+    minimum_expected_to_observed_ratio: 0.80
+    maximum_expected_to_observed_ratio: 1.20
+
+    maximum_roc_auc_decline: 0.05
+    maximum_average_precision_decline: 0.05
+    maximum_recall_decline: 0.10
+    maximum_top_decile_capture_decline: 0.10
+
+segment_monitoring:
+  enabled: true
+  minimum_segment_size: 250
+
+  segments:
+    - credit_score_band
+    - ltv_band
+    - dti_band
+    - loan_purpose
+    - occupancy_status
+    - property_type
+    - property_state
+    - risk_band
+
+  metrics:
+    - record_count
+    - observed_default_rate
+    - predicted_default_rate
+    - roc_auc
+    - brier_score
+    - recall
+    - false_negative_rate
+
+  thresholds:
+    maximum_auc_gap: 0.10
+    maximum_recall_gap: 0.15
+    maximum_false_negative_rate_gap: 0.15
+    maximum_calibration_gap: 0.10
+
+business_monitoring:
+  enabled: true
+
+  metrics:
+    - total_scored_loans
+    - total_scored_balance
+    - predicted_default_rate
+    - observed_default_rate
+    - high_risk_loan_count
+    - high_risk_loan_balance
+    - expected_credit_loss
+    - default_capture_rate
+    - manual_review_rate
+    - false_negative_count
+    - false_negative_balance
+
+  expected_loss:
+    enabled: true
+    default_loss_given_default: 0.45
+
+  review_capacity:
+    maximum_manual_review_rate: 0.10
+
+  thresholds:
+    predicted_default_rate_change_warning: 0.10
+    predicted_default_rate_change_critical: 0.20
+
+    expected_credit_loss_change_warning: 0.10
+    expected_credit_loss_change_critical: 0.20
+
+    maximum_manual_review_rate: 0.10
+    minimum_default_capture_rate: 0.60
+
+system_monitoring:
+  enabled: true
+
+  api:
+    enabled: true
+
+    metrics:
+      - request_count
+      - successful_request_count
+      - failed_request_count
+      - error_rate
+      - average_latency_ms
+      - p95_latency_ms
+      - p99_latency_ms
+
+    thresholds:
+      error_rate_warning: 0.01
+      error_rate_critical: 0.02
+
+      p95_latency_warning_ms: 500
+      p95_latency_critical_ms: 1000
+
+      availability_warning: 0.99
+      availability_critical: 0.95
+
+  batch_scoring:
+    enabled: true
+
+    metrics:
+      - input_record_count
+      - scored_record_count
+      - failed_record_count
+      - failed_record_rate
+      - execution_time_seconds
+
+    thresholds:
+      failed_record_rate_warning: 0.005
+      failed_record_rate_critical: 0.02
+
+  resources:
+    enabled: true
+
+    metrics:
+      - cpu_percent
+      - memory_percent
+      - disk_usage_percent
+
+    thresholds:
+      cpu_warning: 80
+      cpu_critical: 95
+
+      memory_warning: 80
+      memory_critical: 95
+
+      disk_warning: 80
+      disk_critical: 90
+
+alerting:
+  enabled: true
+
+  severity_levels:
+    - information
+    - warning
+    - critical
+
+  actions:
+    information:
+      - log_event
+      - include_in_monitoring_report
+
+    warning:
+      - create_monitoring_incident
+      - notify_model_owner
+      - investigate_root_cause
+
+    critical:
+      - create_monitoring_incident
+      - notify_model_owner
+      - notify_model_validator
+      - restrict_model_use
+      - evaluate_rollback
+      - initiate_remediation
+
+  suppress_duplicate_alerts_minutes: 60
+  maximum_alerts_per_monitoring_run: 100
+
+response_actions:
+  recalibration:
+    trigger_conditions:
+      - calibration_threshold_breached
+      - ranking_performance_stable
+      - probability_estimates_unreliable
+
+  retraining:
+    trigger_conditions:
+      - discrimination_decline
+      - material_feature_drift
+      - concept_drift
+      - sufficient_new_labeled_data
+
+  rollback:
+    trigger_conditions:
+      - deployment_failure
+      - critical_performance_decline
+      - incorrect_feature_pipeline
+      - unexpected_prediction_behavior
+
+  model_restriction:
+    trigger_conditions:
+      - unresolved_critical_model_risk
+      - invalid_input_data
+      - validation_approval_expired
+      - monitoring_pipeline_failure
+
+retraining:
+  enabled: true
+
+  schedule:
+    frequency: quarterly
+
+  trigger_based:
+    enabled: true
+
+  minimum_new_labeled_records: 10000
+  minimum_months_since_previous_training: 3
+
+  approval_requirements:
+    data_validation_passed: true
+    candidate_outperforms_production: true
+    independent_validation_completed: true
+    governance_approval_received: true
+
+  deployment_strategy:
+    method: shadow
+    retain_previous_model_for_rollback: true
+
+monitoring_schedule:
+  data_quality:
+    frequency: daily
+
+  prediction_monitoring:
+    frequency: daily
+
+  system_monitoring:
+    frequency: hourly
+
+  business_monitoring:
+    frequency: monthly
+
+  model_performance:
+    frequency: monthly
+    requires_matured_labels: true
+
+  independent_validation:
+    frequency: quarterly
+
+reporting:
+  generate_html_report: true
+  generate_json_metrics: true
+  generate_parquet_history: true
+  generate_executive_summary: true
+
+  tools:
+    - evidently
+    - custom_python_metrics
+    - prometheus_client
+
+governance:
+  record_model_version: true
+  record_data_version: true
+  record_feature_version: true
+  record_code_commit: true
+  record_monitoring_timestamp: true
+  record_thresholds_used: true
+  record_alert_decisions: true
+  record_remediation_actions: true
+  retain_monitoring_history: true
