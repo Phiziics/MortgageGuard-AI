@@ -31,11 +31,10 @@ files:
   encoding: utf-8
 
   origination_patterns:
-    - "*orig*.txt"
+  - "historical_data_20??Q?.txt"
 
   performance_patterns:
-    - "*perf*.txt"
-    - "*svcg*.txt"
+  - "historical_data_time_20??Q?.txt"
 
   ignored_patterns:
     - "*crt*"
