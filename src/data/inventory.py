@@ -12,12 +12,14 @@ import pandas as pd
 
 INVENTORY_COLUMNS = [
     "source_archive",
+    "source_path",
     "source_sha256",
     "archive_size_mb",
     "archive_family",
     "member_name",
     "member_type",
     "vintage_year",
+    "vintage_quarter",
     "compressed_size_mb",
     "uncompressed_size_mb",
 ]
@@ -27,11 +29,7 @@ def calculate_sha256(
     file_path: Path,
     chunk_size: int = 1024 * 1024,
 ) -> str:
-    """Calculate a SHA256 checksum for a source file.
-
-    The checksum allows the project to detect whether a raw
-    archive changed between ingestion runs.
-    """
+    """Calculate the SHA256 checksum of a source file."""
 
     if not file_path.exists():
         raise FileNotFoundError(
@@ -56,7 +54,7 @@ def matches_any_pattern(
     file_name: str,
     patterns: list[str],
 ) -> bool:
-    """Return True when a filename matches any configured pattern."""
+    """Return True when a filename matches a configured pattern."""
 
     normalized_name = Path(file_name).name.lower()
 
@@ -75,15 +73,7 @@ def classify_member(
     performance_patterns: list[str],
     ignored_patterns: list[str] | None = None,
 ) -> str:
-    """Classify a file inside an archive.
-
-    Possible values:
-
-    origination
-    performance
-    ignored
-    other
-    """
+    """Classify a file contained inside an archive."""
 
     ignored_patterns = ignored_patterns or []
 
@@ -93,104 +83,91 @@ def classify_member(
     ):
         return "ignored"
 
-    if matches_any_pattern(
-        member_name,
-        origination_patterns,
-    ):
-        return "origination"
-
+    # Check performance first because its filename is more specific.
     if matches_any_pattern(
         member_name,
         performance_patterns,
     ):
         return "performance"
 
+    if matches_any_pattern(
+        member_name,
+        origination_patterns,
+    ):
+        return "origination"
+
+    if Path(member_name).suffix.lower() == ".zip":
+        return "nested_archive"
+
     return "other"
 
 
-def extract_vintage_year(
+def extract_year_and_quarter(
     text: str,
     expected_years: list[int] | None = None,
-) -> int | None:
-    """Extract a Freddie Mac vintage year from a filename.
+) -> tuple[int | None, int | None]:
+    """Extract a vintage year and quarter from Freddie Mac filenames."""
 
-    When expected years are supplied, only configured project
-    years are accepted.
-    """
+    match = re.search(
+        r"(?<!\d)(20\d{2})Q([1-4])(?!\d)",
+        text,
+        flags=re.IGNORECASE,
+    )
 
-    detected_years = [
-        int(year)
-        for year in re.findall(
-            r"(?<!\d)(20\d{2})(?!\d)",
-            text,
-        )
-    ]
+    if match is None:
+        return None, None
 
-    if expected_years:
-        expected_year_set = set(
-            expected_years
-        )
+    year = int(match.group(1))
+    quarter = int(match.group(2))
 
-        matching_years = [
-            year
-            for year in detected_years
-            if year in expected_year_set
-        ]
+    if expected_years and year not in set(expected_years):
+        return None, None
 
-        if matching_years:
-            return matching_years[0]
-
-        return None
-
-    if detected_years:
-        return detected_years[0]
-
-    return None
+    return year, quarter
 
 
 def classify_archive(
     archive_path: Path,
+    member_names: list[str],
     member_types: list[str],
 ) -> str:
-    """Classify the overall archive based on its name and contents."""
+    """Classify a ZIP archive based on its name and contents."""
 
     archive_name = archive_path.name.lower()
 
-    # Prevent accidental ingestion of CRT deal disclosure data.
-    if (
-        "crt" in archive_name
-        or "deal" in archive_name
-    ):
+    if "crt" in archive_name or "deal" in archive_name:
         return "crt_deal_disclosure"
 
-    detected_types = set(
-        member_types
-    )
+    detected_types = set(member_types)
 
-    required_types = {
+    if {
         "origination",
         "performance",
-    }
-
-    if required_types.issubset(
-        detected_types
-    ):
-        return "sflld_candidate"
+    }.issubset(detected_types):
+        return "sflld_quarter_archive"
 
     if (
         "origination" in detected_types
         or "performance" in detected_types
     ):
-        return "incomplete_sflld_candidate"
+        return "incomplete_sflld_quarter_archive"
+
+    # The outer yearly package contains quarterly ZIP archives.
+    if member_names and all(
+        Path(member_name).suffix.lower() == ".zip"
+        for member_name in member_names
+    ):
+        return "outer_year_package"
 
     return "unknown"
 
 
 def inventory_zip_archive(
     archive_path: Path,
+    raw_directory: Path,
     data_config: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Inspect one ZIP archive without extracting it."""
+    """Inspect one ZIP archive without extracting its TXT files."""
 
     if not archive_path.exists():
         raise FileNotFoundError(
@@ -198,34 +175,14 @@ def inventory_zip_archive(
         )
 
     file_config = data_config["files"]
-    expected_years = data_config["source"][
-        "vintage_years"
-    ]
+    expected_years = data_config["source"]["vintage_years"]
 
-    origination_patterns = file_config[
-        "origination_patterns"
-    ]
-
-    performance_patterns = file_config[
-        "performance_patterns"
-    ]
-
-    ignored_patterns = file_config.get(
-        "ignored_patterns",
-        [],
-    )
-
-    source_checksum = calculate_sha256(
-        archive_path
-    )
+    source_checksum = calculate_sha256(archive_path)
 
     archive_size_mb = round(
-        archive_path.stat().st_size
-        / 1_048_576,
+        archive_path.stat().st_size / 1_048_576,
         2,
     )
-
-    rows: list[dict[str, Any]] = []
 
     try:
         with zipfile.ZipFile(
@@ -238,17 +195,23 @@ def inventory_zip_archive(
                 if not member.is_dir()
             ]
 
+            member_names = [
+                member.filename
+                for member in members
+            ]
+
             member_types = [
                 classify_member(
                     member_name=member.filename,
-                    origination_patterns=(
-                        origination_patterns
-                    ),
-                    performance_patterns=(
-                        performance_patterns
-                    ),
-                    ignored_patterns=(
-                        ignored_patterns
+                    origination_patterns=file_config[
+                        "origination_patterns"
+                    ],
+                    performance_patterns=file_config[
+                        "performance_patterns"
+                    ],
+                    ignored_patterns=file_config.get(
+                        "ignored_patterns",
+                        [],
                     ),
                 )
                 for member in members
@@ -256,58 +219,45 @@ def inventory_zip_archive(
 
             archive_family = classify_archive(
                 archive_path=archive_path,
+                member_names=member_names,
                 member_types=member_types,
             )
+
+            rows: list[dict[str, Any]] = []
 
             for member, member_type in zip(
                 members,
                 member_types,
             ):
-                combined_name = (
-                    f"{archive_path.name} "
-                    f"{member.filename}"
-                )
-
-                vintage_year = (
-                    extract_vintage_year(
-                        text=combined_name,
-                        expected_years=(
-                            expected_years
-                        ),
-                    )
+                year, quarter = extract_year_and_quarter(
+                    text=(
+                        f"{archive_path.name} "
+                        f"{member.filename}"
+                    ),
+                    expected_years=expected_years,
                 )
 
                 rows.append(
                     {
-                        "source_archive": (
-                            archive_path.name
+                        "source_archive": archive_path.name,
+                        "source_path": str(
+                            archive_path.relative_to(
+                                raw_directory
+                            )
                         ),
-                        "source_sha256": (
-                            source_checksum
-                        ),
-                        "archive_size_mb": (
-                            archive_size_mb
-                        ),
-                        "archive_family": (
-                            archive_family
-                        ),
-                        "member_name": (
-                            member.filename
-                        ),
-                        "member_type": (
-                            member_type
-                        ),
-                        "vintage_year": (
-                            vintage_year
-                        ),
+                        "source_sha256": source_checksum,
+                        "archive_size_mb": archive_size_mb,
+                        "archive_family": archive_family,
+                        "member_name": member.filename,
+                        "member_type": member_type,
+                        "vintage_year": year,
+                        "vintage_quarter": quarter,
                         "compressed_size_mb": round(
-                            member.compress_size
-                            / 1_048_576,
+                            member.compress_size / 1_048_576,
                             2,
                         ),
                         "uncompressed_size_mb": round(
-                            member.file_size
-                            / 1_048_576,
+                            member.file_size / 1_048_576,
                             2,
                         ),
                     }
@@ -323,14 +273,12 @@ def inventory_zip_archive(
 
 def inventory_loose_text_file(
     text_path: Path,
+    raw_directory: Path,
     data_config: dict[str, Any],
 ) -> dict[str, Any]:
-    """Inventory a text file stored directly in the raw folder."""
+    """Inventory an already extracted Freddie Mac TXT file."""
 
     file_config = data_config["files"]
-    expected_years = data_config["source"][
-        "vintage_years"
-    ]
 
     member_type = classify_member(
         member_name=text_path.name,
@@ -346,29 +294,34 @@ def inventory_loose_text_file(
         ),
     )
 
+    year, quarter = extract_year_and_quarter(
+        text=text_path.name,
+        expected_years=data_config["source"][
+            "vintage_years"
+        ],
+    )
+
+    file_size_mb = round(
+        text_path.stat().st_size / 1_048_576,
+        2,
+    )
+
     return {
         "source_archive": text_path.name,
+        "source_path": str(
+            text_path.relative_to(raw_directory)
+        ),
         "source_sha256": calculate_sha256(
             text_path
         ),
-        "archive_size_mb": round(
-            text_path.stat().st_size
-            / 1_048_576,
-            2,
-        ),
+        "archive_size_mb": file_size_mb,
         "archive_family": "loose_text_file",
         "member_name": text_path.name,
         "member_type": member_type,
-        "vintage_year": extract_vintage_year(
-            text=text_path.name,
-            expected_years=expected_years,
-        ),
+        "vintage_year": year,
+        "vintage_quarter": quarter,
         "compressed_size_mb": None,
-        "uncompressed_size_mb": round(
-            text_path.stat().st_size
-            / 1_048_576,
-            2,
-        ),
+        "uncompressed_size_mb": file_size_mb,
     }
 
 
@@ -376,7 +329,7 @@ def build_raw_inventory(
     raw_directory: Path,
     data_config: dict[str, Any],
 ) -> pd.DataFrame:
-    """Build an inventory for every supported raw file."""
+    """Build an inventory of all supported raw files recursively."""
 
     if not raw_directory.exists():
         raise FileNotFoundError(
@@ -384,68 +337,58 @@ def build_raw_inventory(
             f"{raw_directory}"
         )
 
-    archive_extension = data_config[
-        "files"
-    ].get(
-        "archive_extension",
-        ".zip",
-    )
-
     rows: list[dict[str, Any]] = []
 
-    # Inspect ZIP archives without extracting them.
+    # Search all raw-data subfolders for quarterly ZIP archives.
     archive_files = sorted(
-        raw_directory.glob(
-            f"*{archive_extension}"
-        )
+        raw_directory.rglob("*.zip")
     )
 
     for archive_path in archive_files:
-        archive_rows = (
+        rows.extend(
             inventory_zip_archive(
                 archive_path=archive_path,
+                raw_directory=raw_directory,
                 data_config=data_config,
             )
         )
 
-        rows.extend(
-            archive_rows
-        )
-
-    # Also support already extracted source files.
+    # Also support TXT files that were manually extracted.
     text_files = sorted(
-        raw_directory.glob("*.txt")
+        raw_directory.rglob("*.txt")
     )
 
     for text_path in text_files:
         rows.append(
             inventory_loose_text_file(
                 text_path=text_path,
+                raw_directory=raw_directory,
                 data_config=data_config,
             )
         )
 
-    inventory = pd.DataFrame(
+    return pd.DataFrame(
         rows,
         columns=INVENTORY_COLUMNS,
     )
-
-    return inventory
 
 
 def summarize_inventory(
     inventory: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Summarize detected records by vintage and dataset type."""
+    """Summarize usable files by vintage, quarter, and dataset type."""
+
+    summary_columns = [
+        "vintage_year",
+        "vintage_quarter",
+        "member_type",
+        "file_count",
+        "uncompressed_size_mb",
+    ]
 
     if inventory.empty:
         return pd.DataFrame(
-            columns=[
-                "vintage_year",
-                "member_type",
-                "file_count",
-                "uncompressed_size_mb",
-            ]
+            columns=summary_columns
         )
 
     usable_inventory = inventory.loc[
@@ -457,10 +400,16 @@ def summarize_inventory(
         )
     ].copy()
 
+    if usable_inventory.empty:
+        return pd.DataFrame(
+            columns=summary_columns
+        )
+
     summary = (
         usable_inventory.groupby(
             [
                 "vintage_year",
+                "vintage_quarter",
                 "member_type",
             ],
             dropna=False,
@@ -479,18 +428,15 @@ def summarize_inventory(
         .sort_values(
             [
                 "vintage_year",
+                "vintage_quarter",
                 "member_type",
             ]
         )
-        .reset_index(
-            drop=True
-        )
+        .reset_index(drop=True)
     )
 
-    summary[
-        "uncompressed_size_mb"
-    ] = summary[
-        "uncompressed_size_mb"
-    ].round(2)
+    summary["uncompressed_size_mb"] = (
+        summary["uncompressed_size_mb"].round(2)
+    )
 
     return summary
