@@ -10,12 +10,11 @@ from src.data.inventory import (
     calculate_sha256,
     classify_archive,
     classify_member,
-    extract_vintage_year,
+    extract_year_and_quarter,
     inventory_zip_archive,
     matches_any_pattern,
     summarize_inventory,
 )
-
 
 @pytest.fixture
 def data_config() -> dict:
