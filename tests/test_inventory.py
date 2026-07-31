@@ -16,9 +16,10 @@ from src.data.inventory import (
     summarize_inventory,
 )
 
+
 @pytest.fixture
 def data_config() -> dict:
-    """Provide a minimal data configuration for inventory tests."""
+    """Provide a minimal configuration for inventory tests."""
 
     return {
         "source": {
@@ -26,16 +27,14 @@ def data_config() -> dict:
                 2023,
                 2024,
                 2025,
-            ]
+            ],
         },
         "files": {
-            "archive_extension": ".zip",
             "origination_patterns": [
-                "*orig*.txt",
+                "historical_data_20??Q?.txt",
             ],
             "performance_patterns": [
-                "*perf*.txt",
-                "*svcg*.txt",
+                "historical_data_time_20??Q?.txt",
             ],
             "ignored_patterns": [
                 "*crt*",
@@ -50,7 +49,7 @@ def data_config() -> dict:
 def test_calculate_sha256(
     tmp_path: Path,
 ) -> None:
-    """Confirm that the same file always produces the same checksum."""
+    """Confirm that the same file produces the same checksum."""
 
     file_path = tmp_path / "sample.txt"
 
@@ -90,95 +89,133 @@ def test_calculate_sha256_missing_file(
         )
 
 
-def test_matches_any_pattern() -> None:
-    """Confirm that configured wildcard patterns are applied."""
+def test_matches_origination_pattern() -> None:
+    """Confirm that the real origination filename matches."""
 
     result = matches_any_pattern(
-        file_name="sample_orig_2023.txt",
+        file_name=(
+            "historical_data_2023Q1.txt"
+        ),
         patterns=[
-            "*orig*.txt",
+            "historical_data_20??Q?.txt",
         ],
     )
 
     assert result is True
 
 
-def test_classify_origination_member() -> None:
-    """Confirm that an origination source file is identified."""
+def test_matches_performance_pattern() -> None:
+    """Confirm that the real performance filename matches."""
+
+    result = matches_any_pattern(
+        file_name=(
+            "historical_data_time_2023Q1.txt"
+        ),
+        patterns=[
+            "historical_data_time_20??Q?.txt",
+        ],
+    )
+
+    assert result is True
+
+
+def test_classify_origination_member(
+    data_config: dict,
+) -> None:
+    """Confirm that an origination file is identified."""
 
     result = classify_member(
-        member_name="sample_orig_2023.txt",
-        origination_patterns=[
-            "*orig*.txt",
-        ],
-        performance_patterns=[
-            "*perf*.txt",
-            "*svcg*.txt",
-        ],
+        member_name=(
+            "historical_data_2023Q1.txt"
+        ),
+        origination_patterns=data_config[
+            "files"
+        ]["origination_patterns"],
+        performance_patterns=data_config[
+            "files"
+        ]["performance_patterns"],
+        ignored_patterns=data_config[
+            "files"
+        ]["ignored_patterns"],
     )
 
     assert result == "origination"
 
 
-def test_classify_performance_member() -> None:
-    """Confirm that a performance source file is identified."""
+def test_classify_performance_member(
+    data_config: dict,
+) -> None:
+    """Confirm that a monthly performance file is identified."""
 
     result = classify_member(
-        member_name="sample_perf_2023.txt",
-        origination_patterns=[
-            "*orig*.txt",
-        ],
-        performance_patterns=[
-            "*perf*.txt",
-            "*svcg*.txt",
-        ],
+        member_name=(
+            "historical_data_time_2023Q1.txt"
+        ),
+        origination_patterns=data_config[
+            "files"
+        ]["origination_patterns"],
+        performance_patterns=data_config[
+            "files"
+        ]["performance_patterns"],
+        ignored_patterns=data_config[
+            "files"
+        ]["ignored_patterns"],
     )
 
     assert result == "performance"
 
 
-def test_classify_older_performance_name() -> None:
-    """Confirm support for an older servicing filename convention."""
+def test_classify_nested_archive(
+    data_config: dict,
+) -> None:
+    """Confirm that a quarterly ZIP inside a yearly ZIP is detected."""
 
     result = classify_member(
-        member_name="sample_svcg_2023.txt",
-        origination_patterns=[
-            "*orig*.txt",
-        ],
-        performance_patterns=[
-            "*perf*.txt",
-            "*svcg*.txt",
-        ],
+        member_name=(
+            "historical_data_2023Q1.zip"
+        ),
+        origination_patterns=data_config[
+            "files"
+        ]["origination_patterns"],
+        performance_patterns=data_config[
+            "files"
+        ]["performance_patterns"],
+        ignored_patterns=data_config[
+            "files"
+        ]["ignored_patterns"],
     )
 
-    assert result == "performance"
+    assert result == "nested_archive"
 
 
-def test_classify_ignored_member() -> None:
-    """Confirm that ignored files are excluded before ingestion."""
+def test_classify_ignored_member(
+    data_config: dict,
+) -> None:
+    """Confirm that documentation files are ignored."""
 
     result = classify_member(
         member_name="dataset_readme.pdf",
-        origination_patterns=[
-            "*orig*.txt",
-        ],
-        performance_patterns=[
-            "*perf*.txt",
-        ],
-        ignored_patterns=[
-            "*readme*",
-            "*.pdf",
-        ],
+        origination_patterns=data_config[
+            "files"
+        ]["origination_patterns"],
+        performance_patterns=data_config[
+            "files"
+        ]["performance_patterns"],
+        ignored_patterns=data_config[
+            "files"
+        ]["ignored_patterns"],
     )
 
     assert result == "ignored"
 
 
-def test_extract_expected_vintage_year() -> None:
-    """Confirm that a configured vintage year is extracted."""
+def test_extract_year_and_quarter() -> None:
+    """Confirm that the vintage year and quarter are extracted."""
 
-    result = extract_vintage_year(
-        text="sample_orig_2024.txt",
+    result = extract_year_and_quarter(
+        text=(
+            "historical_data_2024Q3.zip"
+        ),
         expected_years=[
             2023,
             2024,
@@ -186,14 +223,19 @@ def test_extract_expected_vintage_year() -> None:
         ],
     )
 
-    assert result == 2024
+    assert result == (
+        2024,
+        3,
+    )
 
 
-def test_reject_unexpected_vintage_year() -> None:
-    """Confirm that a year outside the project scope is rejected."""
+def test_reject_unexpected_year() -> None:
+    """Confirm that years outside the project scope are rejected."""
 
-    result = extract_vintage_year(
-        text="sample_orig_2022.txt",
+    result = extract_year_and_quarter(
+        text=(
+            "historical_data_2022Q4.zip"
+        ),
         expected_years=[
             2023,
             2024,
@@ -201,56 +243,120 @@ def test_reject_unexpected_vintage_year() -> None:
         ],
     )
 
-    assert result is None
+    assert result == (
+        None,
+        None,
+    )
 
 
-def test_classify_complete_sflld_archive(
+def test_reject_invalid_quarter() -> None:
+    """Confirm that only quarters one through four are accepted."""
+
+    result = extract_year_and_quarter(
+        text=(
+            "historical_data_2023Q5.zip"
+        ),
+        expected_years=[
+            2023,
+            2024,
+            2025,
+        ],
+    )
+
+    assert result == (
+        None,
+        None,
+    )
+
+
+def test_classify_complete_quarter_archive(
     tmp_path: Path,
 ) -> None:
-    """Confirm that an archive with both source types is valid."""
+    """Confirm that a complete quarterly archive is identified."""
 
     archive_path = (
         tmp_path
-        / "sample_2023.zip"
+        / "historical_data_2023Q1.zip"
     )
 
     result = classify_archive(
         archive_path=archive_path,
+        member_names=[
+            "historical_data_2023Q1.txt",
+            (
+                "historical_data_time_"
+                "2023Q1.txt"
+            ),
+        ],
         member_types=[
             "origination",
             "performance",
         ],
     )
 
-    assert result == "sflld_candidate"
+    assert result == (
+        "sflld_quarter_archive"
+    )
 
 
-def test_classify_incomplete_sflld_archive(
+def test_classify_incomplete_quarter_archive(
     tmp_path: Path,
 ) -> None:
-    """Confirm that an archive missing one source type is incomplete."""
+    """Confirm that an incomplete quarterly archive is identified."""
 
     archive_path = (
         tmp_path
-        / "sample_2024.zip"
+        / "historical_data_2023Q2.zip"
     )
 
     result = classify_archive(
         archive_path=archive_path,
+        member_names=[
+            "historical_data_2023Q2.txt",
+        ],
         member_types=[
             "origination",
         ],
     )
 
     assert result == (
-        "incomplete_sflld_candidate"
+        "incomplete_sflld_quarter_archive"
     )
+
+
+def test_classify_outer_year_package(
+    tmp_path: Path,
+) -> None:
+    """Confirm that a yearly package containing quarterly ZIPs is detected."""
+
+    archive_path = (
+        tmp_path
+        / "historical_data_2023.zip"
+    )
+
+    result = classify_archive(
+        archive_path=archive_path,
+        member_names=[
+            "historical_data_2023Q1.zip",
+            "historical_data_2023Q2.zip",
+            "historical_data_2023Q3.zip",
+            "historical_data_2023Q4.zip",
+        ],
+        member_types=[
+            "nested_archive",
+            "nested_archive",
+            "nested_archive",
+            "nested_archive",
+        ],
+    )
+
+    assert result == "outer_year_package"
 
 
 def test_classify_crt_archive(
     tmp_path: Path,
 ) -> None:
-    """Confirm that CRT disclosure data is detected and rejected."""
+    """Confirm that CRT disclosure data is detected."""
 
     archive_path = (
         tmp_path
@@ -259,6 +365,9 @@ def test_classify_crt_archive(
 
     result = classify_archive(
         archive_path=archive_path,
+        member_names=[
+            "deal_data.txt",
+        ],
         member_types=[
             "other",
         ],
@@ -267,15 +376,15 @@ def test_classify_crt_archive(
     assert result == "crt_deal_disclosure"
 
 
-def test_inventory_zip_archive(
+def test_inventory_quarter_archive(
     tmp_path: Path,
     data_config: dict,
 ) -> None:
-    """Confirm that a valid Freddie Mac archive is inventoried."""
+    """Confirm that a quarterly archive is inventoried correctly."""
 
     archive_path = (
         tmp_path
-        / "sample_2023.zip"
+        / "historical_data_2023Q1.zip"
     )
 
     with zipfile.ZipFile(
@@ -283,7 +392,7 @@ def test_inventory_zip_archive(
         mode="w",
     ) as archive:
         archive.writestr(
-            "sample_orig_2023.txt",
+            "historical_data_2023Q1.txt",
             (
                 "L001|720|250000\n"
                 "L002|680|180000\n"
@@ -291,7 +400,10 @@ def test_inventory_zip_archive(
         )
 
         archive.writestr(
-            "sample_perf_2023.txt",
+            (
+                "historical_data_time_"
+                "2023Q1.txt"
+            ),
             (
                 "L001|202301|250000|0\n"
                 "L001|202302|249500|0\n"
@@ -299,13 +411,9 @@ def test_inventory_zip_archive(
             ),
         )
 
-        archive.writestr(
-            "dataset_readme.pdf",
-            "Reference documentation",
-        )
-
     rows = inventory_zip_archive(
         archive_path=archive_path,
+        raw_directory=tmp_path,
         data_config=data_config,
     )
 
@@ -313,19 +421,18 @@ def test_inventory_zip_archive(
         rows
     )
 
-    assert len(inventory) == 3
+    assert len(inventory) == 2
 
     assert set(
         inventory["member_type"]
     ) == {
         "origination",
         "performance",
-        "ignored",
     }
 
     assert (
         inventory["archive_family"]
-        .eq("sflld_candidate")
+        .eq("sflld_quarter_archive")
         .all()
     )
 
@@ -335,24 +442,83 @@ def test_inventory_zip_archive(
         .all()
     )
 
-    assert inventory[
-        "source_sha256"
-    ].str.len().eq(64).all()
+    assert (
+        inventory["vintage_quarter"]
+        .eq(1)
+        .all()
+    )
+
+    assert (
+        inventory["source_sha256"]
+        .str.len()
+        .eq(64)
+        .all()
+    )
 
 
-def test_inventory_invalid_zip_archive(
+def test_inventory_outer_year_package(
     tmp_path: Path,
     data_config: dict,
 ) -> None:
-    """Confirm that an invalid ZIP archive raises a clear error."""
+    """Confirm that an outer yearly archive is identified safely."""
 
     archive_path = (
         tmp_path
-        / "sample_2023.zip"
+        / "historical_data_2023.zip"
+    )
+
+    with zipfile.ZipFile(
+        archive_path,
+        mode="w",
+    ) as archive:
+        archive.writestr(
+            "historical_data_2023Q1.zip",
+            b"nested archive placeholder",
+        )
+
+        archive.writestr(
+            "historical_data_2023Q2.zip",
+            b"nested archive placeholder",
+        )
+
+    rows = inventory_zip_archive(
+        archive_path=archive_path,
+        raw_directory=tmp_path,
+        data_config=data_config,
+    )
+
+    inventory = pd.DataFrame(
+        rows
+    )
+
+    assert len(inventory) == 2
+
+    assert (
+        inventory["archive_family"]
+        .eq("outer_year_package")
+        .all()
+    )
+
+    assert (
+        inventory["member_type"]
+        .eq("nested_archive")
+        .all()
+    )
+
+
+def test_inventory_invalid_zip(
+    tmp_path: Path,
+    data_config: dict,
+) -> None:
+    """Confirm that a corrupt ZIP archive raises an error."""
+
+    archive_path = (
+        tmp_path
+        / "historical_data_2023Q1.zip"
     )
 
     archive_path.write_text(
-        "This is not a valid ZIP archive.",
+        "This is not a ZIP archive.",
         encoding="utf-8",
     )
 
@@ -362,19 +528,27 @@ def test_inventory_invalid_zip_archive(
     ):
         inventory_zip_archive(
             archive_path=archive_path,
+            raw_directory=tmp_path,
             data_config=data_config,
         )
 
 
-def test_build_raw_inventory(
+def test_build_raw_inventory_recursively(
     tmp_path: Path,
     data_config: dict,
 ) -> None:
-    """Confirm that all supported raw files are inventoried."""
+    """Confirm that quarterly ZIPs are found inside subfolders."""
+
+    source_folder = (
+        tmp_path
+        / "historical_data_2024"
+    )
+
+    source_folder.mkdir()
 
     archive_path = (
-        tmp_path
-        / "sample_2024.zip"
+        source_folder
+        / "historical_data_2024Q2.zip"
     )
 
     with zipfile.ZipFile(
@@ -382,24 +556,17 @@ def test_build_raw_inventory(
         mode="w",
     ) as archive:
         archive.writestr(
-            "sample_orig_2024.txt",
+            "historical_data_2024Q2.txt",
             "L001|740\n",
         )
 
         archive.writestr(
-            "sample_perf_2024.txt",
-            "L001|202401|0\n",
+            (
+                "historical_data_time_"
+                "2024Q2.txt"
+            ),
+            "L001|202404|0\n",
         )
-
-    loose_file = (
-        tmp_path
-        / "sample_orig_2025.txt"
-    )
-
-    loose_file.write_text(
-        "L002|710\n",
-        encoding="utf-8",
-    )
 
     inventory = build_raw_inventory(
         raw_directory=tmp_path,
@@ -410,23 +577,26 @@ def test_build_raw_inventory(
         inventory.columns
     ) == INVENTORY_COLUMNS
 
-    assert len(inventory) == 3
+    assert len(inventory) == 2
 
-    assert set(
+    assert (
         inventory["vintage_year"]
-        .dropna()
-        .astype(int)
-    ) == {
-        2024,
-        2025,
-    }
+        .eq(2024)
+        .all()
+    )
+
+    assert (
+        inventory["vintage_quarter"]
+        .eq(2)
+        .all()
+    )
 
 
 def test_build_inventory_missing_directory(
     tmp_path: Path,
     data_config: dict,
 ) -> None:
-    """Confirm that a missing raw directory raises a clear error."""
+    """Confirm that a missing raw directory raises an error."""
 
     missing_directory = (
         tmp_path
@@ -444,29 +614,50 @@ def test_build_inventory_missing_directory(
 
 
 def test_summarize_inventory() -> None:
-    """Confirm that inventory records are summarized by type and year."""
+    """Confirm that inventory is summarized by year, quarter, and type."""
 
     inventory = pd.DataFrame(
         [
             {
-                "source_archive": "sample_2023.zip",
+                "source_archive": (
+                    "historical_data_2023Q1.zip"
+                ),
+                "source_path": (
+                    "historical_data_2023Q1.zip"
+                ),
                 "source_sha256": "a" * 64,
                 "archive_size_mb": 10.0,
-                "archive_family": "sflld_candidate",
-                "member_name": "sample_orig_2023.txt",
+                "archive_family": (
+                    "sflld_quarter_archive"
+                ),
+                "member_name": (
+                    "historical_data_2023Q1.txt"
+                ),
                 "member_type": "origination",
                 "vintage_year": 2023,
+                "vintage_quarter": 1,
                 "compressed_size_mb": 1.0,
                 "uncompressed_size_mb": 2.0,
             },
             {
-                "source_archive": "sample_2023.zip",
+                "source_archive": (
+                    "historical_data_2023Q1.zip"
+                ),
+                "source_path": (
+                    "historical_data_2023Q1.zip"
+                ),
                 "source_sha256": "a" * 64,
                 "archive_size_mb": 10.0,
-                "archive_family": "sflld_candidate",
-                "member_name": "sample_perf_2023.txt",
+                "archive_family": (
+                    "sflld_quarter_archive"
+                ),
+                "member_name": (
+                    "historical_data_time_"
+                    "2023Q1.txt"
+                ),
                 "member_type": "performance",
                 "vintage_year": 2023,
+                "vintage_quarter": 1,
                 "compressed_size_mb": 4.0,
                 "uncompressed_size_mb": 8.0,
             },
@@ -487,13 +678,26 @@ def test_summarize_inventory() -> None:
     }
 
     assert (
+        summary["vintage_year"]
+        .eq(2023)
+        .all()
+    )
+
+    assert (
+        summary["vintage_quarter"]
+        .eq(1)
+        .all()
+    )
+
+    assert (
         summary["file_count"]
         .eq(1)
         .all()
     )
 
     assert (
-        summary["uncompressed_size_mb"]
-        .sum()
+        summary[
+            "uncompressed_size_mb"
+        ].sum()
         == 10.0
     )
